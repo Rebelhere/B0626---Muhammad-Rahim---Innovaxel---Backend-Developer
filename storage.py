@@ -1,16 +1,3 @@
-"""
-Thread-safe JSON file storage with file-level locking to prevent race conditions.
-Uses a lock file to ensure atomic read-modify-write operations.
-
-Optimization: in-memory cache with write-time invalidation.
-Reads within the same process that don't cross a write boundary are served
-from memory — eliminates redundant disk I/O + JSON parsing.
-
-Thread safety is preserved because:
-- Python's GIL ensures dict reads/writes are atomic.
-- The cache dirty flag is only set inside the file lock.
-- For this single-process CLI tool, no cross-process caching issues exist.
-"""
 import json
 import os
 import time
@@ -65,9 +52,8 @@ class FileLock:
 
 _file_lock = FileLock(LOCK_FILE)
 
-# --- In-memory cache ---
 _cache: Optional[dict] = None
-_cache_dirty: bool = True  # Start dirty so first read hits disk
+_cache_dirty: bool = True
 
 
 def _load_data() -> dict:
@@ -87,21 +73,13 @@ def _save_data(data: dict) -> None:
 
 
 def read_data() -> dict:
-    """
-    Thread-safe read of all data with in-memory caching.
-    First call reads from disk; subsequent calls return cached copy
-    until a write invalidates the cache.
-    """
     global _cache, _cache_dirty
 
-    # Fast path: return cached data if clean (no lock needed for read)
     if not _cache_dirty and _cache is not None:
         return _cache
 
-    # Slow path: read from disk
     _file_lock.acquire()
     try:
-        # Double-check after acquiring lock — another thread may have refreshed
         if not _cache_dirty and _cache is not None:
             return _cache
         _cache = _load_data()
@@ -124,17 +102,12 @@ def write_data(data: dict) -> None:
 
 
 def atomic_update(operation) -> any:
-    """
-    Execute an operation atomically: read data, apply operation, write back.
-    Invalidates the in-memory cache on write so the next read picks up changes.
-    """
     global _cache, _cache_dirty
     _file_lock.acquire()
     try:
         data = _load_data()
         result = operation(data)
         _save_data(data)
-        # Update cache with the written data — no need for next read to hit disk
         _cache = data
         _cache_dirty = False
         return result

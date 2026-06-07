@@ -1,17 +1,5 @@
 """
 Core business logic for the Event Registration System.
-
-Optimization strategy:
-- _build_indexes() scans the raw data once in O(n + r) to build:
-    event_by_id:       dict  event_id -> event          (O(1) lookup vs O(n) scan)
-    reg_count_by_event: dict  event_id -> active count   (O(1) seat count vs O(r) scan)
-    active_reg_lookup:  set   (event_id, user_lower)     (O(1) dup check vs O(r) scan)
-    regs_by_event:      dict  event_id -> [registrations] (O(1) filter vs O(r) scan)
-    event_names:        set   name.lower()               (O(1) name check vs O(n) scan)
-- Every function that previously did linear scans now uses these indexes.
-- get_events() nested loop O(n * r) -> O(n + r) total.
-- register_user() two O(r) scans -> O(1) lookups.
-- cancel_registration() O(r) scan -> O(1) lookup.
 """
 import re
 from collections import defaultdict
@@ -23,14 +11,10 @@ from storage import atomic_update, read_data
 
 
 class EventManagerError(Exception):
-    """Custom exception for business rule violations."""
     pass
 
 
 def _validate_date(date_str: str) -> date:
-    """
-    Parse and validate a date string with specific error messages.
-    """
     raw = date_str.strip()
 
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", raw):
@@ -80,16 +64,6 @@ def _validate_date(date_str: str) -> date:
 
 
 def _build_indexes(data: dict) -> dict:
-    """
-    Build lookup indexes from raw data in a single O(n + r) pass.
-
-    Returns a dict with:
-        event_by_id:        {event_id -> event_dict}
-        event_names:        {name_lower -> event_id}   for uniqueness checks
-        reg_count_by_event: {event_id -> int}           active registration counts
-        active_reg_lookup:  {(event_id, user_name_lower)}  set for O(1) dup check
-        regs_by_event:      {event_id -> [reg_dicts]}   grouped registrations
-    """
     # Index events by ID and by name
     event_by_id: dict = {}
     event_names: dict = {}
@@ -117,14 +91,9 @@ def _build_indexes(data: dict) -> dict:
         "regs_by_event": regs_by_event,
     }
 
-
-
-# Create Event — O(1) name uniqueness check via hash set
-
 def create_event(name: str, total_seats: int, event_date: str) -> Event:
     """
     Create a new event with validation.
-    Name uniqueness check: O(1) via hash set (was O(n) linear scan).
     """
     name = name.strip()
     if not name:
@@ -151,15 +120,7 @@ def create_event(name: str, total_seats: int, event_date: str) -> Event:
 
     return atomic_update(_create)
 
-
-
-# Register User — O(1) for all lookups via indexes
-
 def register_user(user_name: str, event_id: str) -> Registration:
-    """
-    Register a user for an event. Thread-safe, prevents overbooking.
-    All lookups now O(1) via pre-built indexes (were O(n) + 2*O(r)).
-    """
     user_name = user_name.strip()
     event_id = event_id.strip()
 
@@ -171,7 +132,6 @@ def register_user(user_name: str, event_id: str) -> Registration:
     def _register(data: dict) -> Registration:
         idx = _build_indexes(data)
 
-        # O(1) event lookup (was O(n) scan)
         event = idx["event_by_id"].get(event_id)
         if event is None:
             raise EventManagerError(f"Event with ID '{event_id}' not found.")
@@ -183,7 +143,6 @@ def register_user(user_name: str, event_id: str) -> Registration:
                 f"Event '{event['name']}' is full. No seats available."
             )
 
-        # O(1) duplicate check via hash set (was O(r) scan)
         if (event_id, user_name.lower()) in idx["active_reg_lookup"]:
             raise EventManagerError(
                 f"User '{user_name}' is already registered for event '{event['name']}'."
@@ -195,13 +154,7 @@ def register_user(user_name: str, event_id: str) -> Registration:
 
     return atomic_update(_register)
 
-
-# Cancel Registration — O(1) lookup via grouped registrations
 def cancel_registration(user_name: str, event_id: str) -> Registration:
-    """
-    Cancel a user's active registration. Seat becomes available again.
-    Lookup is O(k) where k = registrations for this event (was O(r) for all).
-    """
     user_name = user_name.strip()
     event_id = event_id.strip()
 
@@ -227,28 +180,17 @@ def cancel_registration(user_name: str, event_id: str) -> Registration:
 
     return atomic_update(_cancel)
 
-
-
-# View Events — O(n + r) total via pre-built counter (was O(n * r) nested loop)
-
 def get_events(upcoming_only: bool = False, sort_by_date: bool = True) -> list:
-    """
-    Get all events with computed available seats and registration counts.
-    Uses pre-built registration counter: O(n + r) total (was O(n * r)).
-    Date comparison uses string compare instead of strptime (micro-optimization).
-    """
     data = read_data()
     idx = _build_indexes(data)
 
-    today_str = date.today().isoformat()  # YYYY-MM-DD string for direct comparison
+    today_str = date.today().isoformat()  
     events = []
 
     for e in data["events"]:
-        # String comparison instead of strptime — same result for ISO format
         if upcoming_only and e["event_date"] < today_str:
             continue
 
-        # O(1) seat count via pre-built counter (was O(r) per event = O(n*r) total)
         active_count = idx["reg_count_by_event"].get(e["id"], 0)
 
         events.append({
@@ -267,17 +209,61 @@ def get_events(upcoming_only: bool = False, sort_by_date: bool = True) -> list:
     return events
 
 
-# Get Event by ID — O(1) via dict index (was O(n) scan)
+def edit_event(event_id: str, new_name: str = None, new_total_seats: int = None, new_event_date: str = None) -> Event:
+    event_id = event_id.strip()
+    if not event_id:
+        raise EventManagerError("Event ID is required.")
+
+    if new_name is None and new_total_seats is None and new_event_date is None:
+        raise EventManagerError("At least one field (name, total_seats, or event_date) must be provided.")
+
+    def _edit(data: dict) -> Event:
+        idx = _build_indexes(data)
+
+        event = idx["event_by_id"].get(event_id)
+        if event is None:
+            raise EventManagerError(f"Event with ID '{event_id}' not found.")
+
+        active_count = idx["reg_count_by_event"].get(event_id, 0)
+
+        if new_name is not None:
+            stripped = new_name.strip()
+            if not stripped:
+                raise EventManagerError("Event name cannot be empty.")
+            name_lower = stripped.lower()
+            for eid, ev in idx["event_by_id"].items():
+                if eid != event_id and ev["name"].lower() == name_lower:
+                    raise EventManagerError(f"An event with name '{stripped}' already exists.")
+            event["name"] = stripped
+
+        if new_total_seats is not None:
+            if new_total_seats <= 0:
+                raise EventManagerError("Total seats must be greater than 0.")
+            if new_total_seats < active_count:
+                raise EventManagerError(
+                    f"Cannot reduce seats to {new_total_seats}. "
+                    f"There are already {active_count} active registrations."
+                )
+            event["total_seats"] = new_total_seats
+
+        if new_event_date is not None:
+            new_dt = _validate_date(new_event_date)
+            today = date.today()
+            if new_dt <= today:
+                raise EventManagerError(f"Event date must be in the future. Today is {today}.")
+            event["event_date"] = new_event_date.strip()
+
+        return Event.from_dict(event)
+
+    return atomic_update(_edit)
+
+
 def get_event_by_id(event_id: str) -> Optional[dict]:
-    """Get a single event by ID. O(1) lookup."""
     data = read_data()
     idx = _build_indexes(data)
     return idx["event_by_id"].get(event_id)
 
-
-# Get Registrations for Event — O(1) via grouped index (was O(r) scan)
 def get_registrations_for_event(event_id: str, active_only: bool = True) -> list:
-    """Get all registrations for a specific event. O(k) where k = regs for this event."""
     data = read_data()
     idx = _build_indexes(data)
 

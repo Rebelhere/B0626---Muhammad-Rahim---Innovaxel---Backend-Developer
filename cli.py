@@ -14,6 +14,7 @@ from event_manager import (
     create_event,
     register_user,
     cancel_registration,
+    edit_event,
     get_events,
     get_event_by_id,
     get_registrations_for_event,
@@ -41,8 +42,9 @@ def print_menu():
     table.add_row("2", "Register User for Event")
     table.add_row("3", "View Events")
     table.add_row("4", "View Registrations for an Event")
-    table.add_row("5", "Cancel Registration")
-    table.add_row("6", "Exit")
+    table.add_row("5", "Edit Event")
+    table.add_row("6", "Cancel Registration")
+    table.add_row("7", "Exit")
     console.print(table)
 
 
@@ -218,6 +220,88 @@ def handle_view_registrations():
     console.print()
 
 
+def handle_edit_event():
+    console.print("\n[bold blue]Edit Event[/bold blue]")
+
+    events = get_events(upcoming_only=False, sort_by_date=True)
+    if not events:
+        console.print("[yellow]No events found.[/yellow]\n")
+        return
+
+    event_table = Table(box=box.SIMPLE_HEAVY, border_style="dim")
+    event_table.add_column("Event ID", style="cyan", no_wrap=True)
+    event_table.add_column("Name", style="white", min_width=16, max_width=28)
+    event_table.add_column("Date", style="yellow", justify="center", min_width=12, no_wrap=True)
+    event_table.add_column("Total Seats", style="blue", justify="center", min_width=11, no_wrap=True)
+    event_table.add_column("Available", style="green", justify="center", min_width=9, no_wrap=True)
+    event_table.add_column("Registered", style="magenta", justify="center", min_width=11, no_wrap=True)
+    for e in events:
+        avail = e["available_seats"]
+        avail_style = "green" if avail > 0 else "bold red"
+        event_table.add_row(
+            e["id"][:8] + "...",
+            e["name"],
+            e["event_date"],
+            str(e["total_seats"]),
+            f"[{avail_style}]{avail}[/{avail_style}]",
+            str(e["total_registrations"]),
+        )
+    console.print(event_table)
+
+    event_id = Prompt.ask("\nEvent ID (full ID)")
+    full_event_id = event_id
+    if len(event_id) < 36:
+        prefix = event_id.rstrip(".")
+        for e in events:
+            if e["id"].startswith(prefix):
+                full_event_id = e["id"]
+                break
+
+    # Verify event exists
+    event = get_event_by_id(full_event_id)
+    if event is None:
+        console.print("[red]Event not found.[/red]\n")
+        return
+
+    console.print(f"\n[dim]Editing: [bold]{event['name']}[/bold][/dim]")
+    console.print("[dim]Leave a field blank to keep its current value.[/dim]\n")
+
+    # Show current values and ask for new ones
+    new_name = Prompt.ask(f"  Name [{event['name']}]", default="")
+    new_seats_str = Prompt.ask(f"  Total Seats [{event['total_seats']}]", default="")
+    new_date = Prompt.ask(f"  Event Date [{event['event_date']}]", default="")
+
+    # Only pass fields that were actually changed
+    kwargs = {}
+    if new_name.strip():
+        kwargs["new_name"] = new_name.strip()
+    if new_seats_str.strip():
+        try:
+            seats = int(new_seats_str.strip())
+            kwargs["new_total_seats"] = seats
+        except ValueError:
+            console.print("[red]Invalid number for total seats.[/red]\n")
+            return
+    if new_date.strip():
+        kwargs["new_event_date"] = new_date.strip()
+
+    if not kwargs:
+        console.print("[yellow]No changes made.[/yellow]\n")
+        return
+
+    try:
+        updated = edit_event(full_event_id, **kwargs)
+        console.print(
+            f"\n[bold green]Event updated successfully![/bold green]\n"
+            f"  [cyan]ID:[/cyan]    {updated.id}\n"
+            f"  [cyan]Name:[/cyan]  {updated.name}\n"
+            f"  [cyan]Seats:[/cyan] {updated.total_seats}\n"
+            f"  [cyan]Date:[/cyan]  {updated.event_date}\n"
+        )
+    except EventManagerError as e:
+        console.print(f"\n[bold red]Error: {e}[/bold red]\n")
+
+
 def handle_cancel_registration():
     console.print("\n[bold yellow]Cancel Registration[/bold yellow]\n")
 
@@ -267,7 +351,7 @@ def main():
         print_menu()
         choice = Prompt.ask(
             "\nSelect an option",
-            choices=["1", "2", "3", "4", "5", "6"],
+            choices=["1", "2", "3", "4", "5", "6", "7"],
             default="3",
         )
 
@@ -280,8 +364,10 @@ def main():
         elif choice == "4":
             handle_view_registrations()
         elif choice == "5":
-            handle_cancel_registration()
+            handle_edit_event()
         elif choice == "6":
+            handle_cancel_registration()
+        elif choice == "7":
             console.print("\n[bold cyan]Goodbye![/bold cyan]\n")
             sys.exit(0)
 

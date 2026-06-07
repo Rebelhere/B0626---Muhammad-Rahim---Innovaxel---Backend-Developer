@@ -1,0 +1,21 @@
+{
+  "events": [
+    {
+      "id": "1823899e-63e2-4567-81ba-5eff89bb23df",
+      "name": "eid party",
+      "total_seats": 40,
+      "event_date": "2027-06-28",
+      "created_at": "2026-06-07T16:11:40.099562"
+    }
+  ],
+  "registrations": [
+    {
+      "id": "7fc10a45-796e-4268-b696-11656d35866e",
+      "user_name": "rahim",
+      "event_id": "1823899e-63e2-4567-81ba-5eff89bb23df",
+      "registered_at": "2026-06-07T16:11:58.164999",
+      "cancelled": true,
+      "cancelled_at": "2026-06-07T16:12:41.301615"
+    }
+  ]
+}

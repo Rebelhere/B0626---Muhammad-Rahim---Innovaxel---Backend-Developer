@@ -284,6 +284,107 @@ class TestViewRegistrations(TestCase):
         self.assertTrue(all_regs[0]["cancelled"])
 
 
+class TestEditEvent(TestCase):
+    def setUp(self):
+        cleanup()
+        self.future = (date.today() + timedelta(days=30)).isoformat()
+        self.event = event_manager.create_event("Edit Test", 10, self.future)
+
+    def _edit(self, **kwargs):
+        return event_manager.edit_event(self.event.id, **kwargs)
+
+    def test_edit_name_success(self):
+        updated = self._edit(new_name="New Name")
+        self.assertEqual(updated.name, "New Name")
+
+    def test_edit_seats_success(self):
+        updated = self._edit(new_total_seats=20)
+        self.assertEqual(updated.total_seats, 20)
+
+    def test_edit_date_success(self):
+        new_date = (date.today() + timedelta(days=60)).isoformat()
+        updated = self._edit(new_event_date=new_date)
+        self.assertEqual(updated.event_date, new_date)
+
+    def test_edit_multiple_fields(self):
+        new_date = (date.today() + timedelta(days=90)).isoformat()
+        updated = self._edit(new_name="Renamed", new_total_seats=50, new_event_date=new_date)
+        self.assertEqual(updated.name, "Renamed")
+        self.assertEqual(updated.total_seats, 50)
+        self.assertEqual(updated.event_date, new_date)
+
+    def test_edit_no_fields_raises(self):
+        with self.assertRaises(event_manager.EventManagerError):
+            self._edit()
+
+    def test_edit_nonexistent_event(self):
+        with self.assertRaises(event_manager.EventManagerError):
+            event_manager.edit_event("fake-id-12345", new_name="New")
+
+    def test_edit_duplicate_name(self):
+        other = event_manager.create_event("Other Event", 5, self.future)
+        with self.assertRaises(event_manager.EventManagerError):
+            self._edit(new_name="Other Event")
+
+    def test_edit_name_case_insensitive_duplicate(self):
+        other = event_manager.create_event("Other Event", 5, self.future)
+        with self.assertRaises(event_manager.EventManagerError):
+            self._edit(new_name="other event")
+
+    def test_edit_seats_less_than_active_registrations(self):
+        event_manager.register_user("Alice", self.event.id)
+        event_manager.register_user("Bob", self.event.id)
+        with self.assertRaises(event_manager.EventManagerError) as ctx:
+            self._edit(new_total_seats=1)
+        self.assertIn("active registrations", str(ctx.exception))
+
+    def test_edit_seats_equal_to_active_registrations(self):
+        event_manager.register_user("Alice", self.event.id)
+        event_manager.register_user("Bob", self.event.id)
+        updated = self._edit(new_total_seats=2)
+        self.assertEqual(updated.total_seats, 2)
+
+    def test_edit_seats_zero_raises(self):
+        with self.assertRaises(event_manager.EventManagerError):
+            self._edit(new_total_seats=0)
+
+    def test_edit_seats_negative_raises(self):
+        with self.assertRaises(event_manager.EventManagerError):
+            self._edit(new_total_seats=-5)
+
+    def test_edit_empty_name_raises(self):
+        with self.assertRaises(event_manager.EventManagerError):
+            self._edit(new_name="")
+
+    def test_edit_past_date_raises(self):
+        past = (date.today() - timedelta(days=1)).isoformat()
+        with self.assertRaises(event_manager.EventManagerError):
+            self._edit(new_event_date=past)
+
+    def test_edit_today_date_raises(self):
+        today = date.today().isoformat()
+        with self.assertRaises(event_manager.EventManagerError):
+            self._edit(new_event_date=today)
+
+    def test_edit_invalid_date_format(self):
+        with self.assertRaises(event_manager.EventManagerError):
+            self._edit(new_event_date="not-a-date")
+
+    def test_edit_seats_increase_preserves_registrations(self):
+        event_manager.register_user("Alice", self.event.id)
+        updated = self._edit(new_total_seats=50)
+        self.assertEqual(updated.total_seats, 50)
+        reg = event_manager.register_user("Bob", self.event.id)
+        self.assertFalse(reg.cancelled)
+
+    def test_edit_available_seats_after_increase(self):
+        event_manager.register_user("Alice", self.event.id)
+        self._edit(new_total_seats=20)
+        events = event_manager.get_events(upcoming_only=False)
+        e = next(ev for ev in events if ev["id"] == self.event.id)
+        self.assertEqual(e["available_seats"], 19)
+
+
 class TestConcurrency(TestCase):
     def setUp(self):
         cleanup()
