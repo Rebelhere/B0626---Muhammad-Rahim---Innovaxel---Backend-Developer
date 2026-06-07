@@ -6,9 +6,8 @@ A CLI-based event registration system built with Python. Users can create events
 
 ## Demo
 
-📹 **[Demo Video — Coming Soon](#)**
+📹 **[Demo Video](https://youtu.be/mTzGQtvQpRs)**
 
-*(Link to be added after recording)*
 
 ---
 
