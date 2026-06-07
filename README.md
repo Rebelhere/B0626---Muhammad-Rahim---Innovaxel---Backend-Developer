@@ -1,4 +1,5 @@
 # Event Registration System
+<img width="1024" height="572" alt="image" src="https://github.com/user-attachments/assets/ca64afcd-87d5-4eab-9be2-2c90dd322d1f" />
 
 A CLI-based event registration system built with Python. Users can create events, register for them, cancel registrations, and view event details — all with persistent JSON storage and thread-safe concurrency.
 
